@@ -15,11 +15,7 @@ Route::get('/search', [ProductController::class, 'search']);
 Route::get('/item/{item_id}', [ProductController::class, 'detail']);
 Route::get('/purchase/success', [ProductController::class, 'purchaseSuccess'])
     ->name('purchase.success');
-Route::get('/purchase/cancel', function () {
-    return '決済をキャンセルしました。';
-});
-Route::get('/purchase/pending', [ProductController::class, 'purchasePending']);
-Route::post('/stripe/webhook', [ProductController::class, 'handleWebhook']);
+Route::post('/webhook/stripe', [ProductController::class, 'handleWebhook']);
 
 Route::middleware('auth')->group(
     function () {

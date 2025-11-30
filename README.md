@@ -9,16 +9,6 @@
 3. DockerDesktop アプリを立ち上げる
 4. `docker-compose up -d --build`
 
-> _Mac の M1・M2 チップの PC の場合、`no matching manifest for linux/arm64/v8 in the manifest list entries`のメッセージが表示されビルドができないことがあります。
-> エラーが発生する場合は、docker-compose.yml ファイルの「mysql」内に「platform」の項目を追加で記載してください_
-
-```bash
-mysql:
-    platform: linux/x86_64(この文追加)
-    image: mysql:8.0.26
-    environment:
-```
-
 **Laravel 環境構築**
 
 1. `docker-compose exec php bash`
@@ -85,3 +75,15 @@ php artisan storage:link
 
 - 開発環境：http://localhost/
 - phpMyAdmin:：http://localhost:8080/
+
+コンビニ決済の場合の処理手順
+ログイン
+stripe login ->Enter
+ブラウザでアクセス許可
+
+イベントをローカルに転送
+stripe listen --forward-to http://localhost/webhook/stripe
+Stripe でイベントが発生すると、CLI が自動的にそれを 指定した URL に POST 送信 します。
+
+支払い済みマーク切り替え
+stripe payment_intents mark_as_paid 123456

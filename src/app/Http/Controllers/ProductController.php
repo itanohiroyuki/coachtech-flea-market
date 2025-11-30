@@ -118,146 +118,76 @@ class ProductController extends Controller
     }
 
 
-    // public function postPurchase(PurchaseRequest $request, $item_id)
-    // {
-    //     $user = Auth::user();
-    //     $product = Product::findOrFail($item_id);
-    //     $shipping = session('shipping_address') ?: [
-    //         'postal_code' => $user->profile->postal_code,
-    //         'city' => $user->profile->city,
-    //         'building' => $user->profile->building
-    //     ];
-    //     $product->payment_id = $request->payment_id;
-    //     $product->shipping_address = json_encode($shipping);
-    //     $product->buyer_id = $user->id;
-    //     $product->status = 'sold';
-    //     $product->save();
-    //     session()->forget('shipping_address');
-    //     return redirect('/',);
-    // }
-
-
-    // public function postPurchase(PurchaseRequest $request, $item_id)
-    // {
-    //     $user = Auth::user();
-    //     $product = Product::findOrFail($item_id);
-    //     Stripe::setApiKey(env('STRIPE_SECRET'));
-    //     $paymentMethod = $request->payment_id;
-    //     $session = Session::create([
-    //         'payment_method_types' => ['card'],
-    //         'line_items' => [[
-    //             'price_data' => [
-    //                 'currency' => 'jpy',
-    //                 'product_data' => [
-    //                     'name' => $product->name
-    //                 ],
-    //                 'unit_amount' => $product->price,
-    //             ],
-    //             'quantity' => 1,
-    //         ]],
-    //         'mode' => 'payment',
-    //         'success_url' => url('/purchase/success') . '?item_id=' . $product->id . '&payment_id=' . $paymentMethod,
-    //         'cancel_url' => url('/purchase/cancel'),
-    //     ]);
-    //     return redirect($session->url);
-    // }
-
     public function postPurchase(PurchaseRequest $request, $item_id)
     {
         $user = Auth::user();
         $product = Product::findOrFail($item_id);
-
         Stripe::setApiKey(env('STRIPE_SECRET'));
-
+        $shipping = [
+            'postal_code' => $user->profile->postal_code,
+            'city' => $user->profile->city,
+            'building' => $user->profile->building,
+        ];
         $paymentMethod = $request->payment_id;
-
-        if ($paymentMethod == 1) {
-            $session = Session::create([
-                'payment_method_types' => ['konbini'],
-                'line_items' => [[
-                    'price_data' => [
-                        'currency' => 'jpy',
-                        'product_data' => ['name' => $product->name],
-                        'unit_amount' => $product->price,
-                    ],
-                    'quantity' => 1,
-                ]],
-                'mode' => 'payment',
-
-                'success_url' => url('/') . '?pending=1',
-                'cancel_url' => url('/purchase/cancel'),
-
-                'payment_intent_data' => [
-                    'metadata' => [
-                        'product_id' => $product->id,
-                        'user_id' => $user->id,
-                    ]
-                ]
-            ]);
-        }
-
-        if ($paymentMethod == 2) {
-            $session = Session::create([
-                'payment_method_types' => ['card'],
-                'line_items' => [[
-                    'price_data' => [
-                        'currency' => 'jpy',
-                        'product_data' => ['name' => $product->name],
-                        'unit_amount' => $product->price,
-                    ],
-                    'quantity' => 1,
-                ]],
-                'mode' => 'payment',
-                'success_url' => url('/purchase/success') . '?item_id=' . $product->id . '&payment_id=' . $paymentMethod,
-                'cancel_url' => url('/purchase/cancel'),
-                'payment_intent_data' => [
-                    'metadata' => [
-                        'product_id' => $product->id,
-                        'user_id' => $user->id,
-                    ]
-                ]
-            ]);
-        }
+        $session = Session::create([
+            'payment_method_types' => $paymentMethod == 1 ? ['konbini'] : ['card'],
+            'line_items' => [[
+                'price_data' => [
+                    'currency' => 'jpy',
+                    'product_data' => ['name' => $product->name],
+                    'unit_amount' => $product->price,
+                ],
+                'quantity' => 1,
+            ]],
+            'mode' => 'payment',
+            'success_url' => url('/purchase/success') . '?item_id=' . $product->id . '&payment_id=' . $paymentMethod,
+            'cancel_url' => url('/purchase/cancel'),
+            'payment_intent_data' => [
+                'metadata' => [
+                    'product_id' => $product->id,
+                    'user_id' => $user->id,
+                    'shipping_address' => json_encode($shipping),
+                ],
+            ],
+        ]);
         return redirect($session->url);
     }
 
 
-    public function purchasePending(Request $request)
-    {
-        $product = Product::findOrFail($request->item_id);
-
-        return view('purchase.pending', compact('product'));
-    }
-
     public function handleWebhook(Request $request)
     {
         $payload = $request->getContent();
-        $sigHeader = $_SERVER['HTTP_STRIPE_SIGNATURE'];
+        $sigHeader = $request->header('Stripe-Signature');
         $endpointSecret = env('STRIPE_WEBHOOK_SECRET');
-
         try {
-            $event = Webhook::constructEvent(
-                $payload,
-                $sigHeader,
-                $endpointSecret
-            );
+            $event = \Stripe\Webhook::constructEvent($payload, $sigHeader, $endpointSecret);
         } catch (\Exception $e) {
-            return response('Webhook error', 400);
+            return response()->json(['error' => 'Invalid payload'], 400);
         }
+        if (in_array($event->type, ['checkout.session.completed', 'checkout.session.async_payment_succeeded', 'payment_intent.succeeded'])) {
+            $session = $event->data->object;
+            $productId = $session->metadata->product_id ?? null;
+            $userId = $session->metadata->user_id ?? null;
+            $shipping = $session->metadata->shipping_address ?? null;
+            if ($productId && $userId) {
+                $product = Product::find($productId);
+                if ($product && $product->status !== 'sold') {
+                    $paymentType = 2;
+                    if (isset($session->payment_method_types) && in_array('konbini', $session->payment_method_types)) {
+                        $paymentType = 1;
+                    }
 
-        if ($event->type === 'payment_intent.succeeded') {
-            $intent = $event->data->object;
-
-            $productId = $intent->metadata->product_id;
-            $userId = $intent->metadata->user_id;
-
-            $product = Product::find($productId);
-            $product->status = 'sold';
-            $product->buyer_id = $userId;
-            $product->save();
+                    $product->payment_id = $paymentType;
+                    $product->buyer_id = $userId;
+                    $product->status = 'sold';
+                    if ($shipping) {
+                        $product->shipping_address = $shipping;
+                    }
+                    $product->save();
+                }
+            }
         }
-
-        return response('ok', 200);
+        return response()->json(['received' => true]);
     }
 
 
